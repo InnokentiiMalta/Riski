@@ -26,13 +26,25 @@ function getRandomQuestions(count: number): Question[] {
   return shuffleArray(questions).slice(0, count);
 }
 
+function isMultipleChoice(question: Question): boolean {
+  return Array.isArray(question.correctAnswer);
+}
+
+function arraysEqual(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((val, idx) => val === sortedB[idx]);
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [testQuestions, setTestQuestions] = useState<Question[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [selectedMultiple, setSelectedMultiple] = useState<number[]>([]);
   const [showExplanation, setShowExplanation] = useState(false);
-  const [answers, setAnswers] = useState<(number | null)[]>([]);
+  const [answers, setAnswers] = useState<(number | number[] | null)[]>([]);
   const [score, setScore] = useState(0);
   const [userName, setUserName] = useState('');
   const [timeLeft, setTimeLeft] = useState(0);
@@ -72,6 +84,7 @@ function App() {
     setScreen('quiz');
     setCurrentQuestion(0);
     setSelectedAnswer(null);
+    setSelectedMultiple([]);
     setShowExplanation(false);
     setScore(0);
     setTimeLeft(TIME_PER_QUESTION);
@@ -83,18 +96,48 @@ function App() {
 
   const handleAnswerSelect = (index: number) => {
     if (showExplanation) return;
-    setSelectedAnswer(index);
-    const newAnswers = [...answers];
-    newAnswers[currentQuestion] = index;
-    setAnswers(newAnswers);
+    const question = testQuestions[currentQuestion];
+    
+    if (isMultipleChoice(question)) {
+      // Toggle selection for multiple choice
+      if (selectedMultiple.includes(index)) {
+        setSelectedMultiple(selectedMultiple.filter(i => i !== index));
+        const newAnswers = [...answers];
+        newAnswers[currentQuestion] = selectedMultiple.filter(i => i !== index);
+        setAnswers(newAnswers);
+      } else {
+        const newSelection = [...selectedMultiple, index];
+        setSelectedMultiple(newSelection);
+        const newAnswers = [...answers];
+        newAnswers[currentQuestion] = newSelection;
+        setAnswers(newAnswers);
+      }
+    } else {
+      setSelectedAnswer(index);
+      const newAnswers = [...answers];
+      newAnswers[currentQuestion] = index;
+      setAnswers(newAnswers);
+    }
   };
 
   const handleConfirmAnswer = () => {
-    if (selectedAnswer === null) return;
-    setShowExplanation(true);
-    setTimerActive(false);
-    if (selectedAnswer === testQuestions[currentQuestion].correctAnswer) {
-      setScore((prev) => prev + 1);
+    const question = testQuestions[currentQuestion];
+    
+    if (isMultipleChoice(question)) {
+      if (selectedMultiple.length === 0) return;
+      setShowExplanation(true);
+      setTimerActive(false);
+      const correctAnswers = question.correctAnswer as number[];
+      if (arraysEqual(selectedMultiple, correctAnswers)) {
+        setScore((prev) => prev + 1);
+      }
+    } else {
+      if (selectedAnswer === null) return;
+      setShowExplanation(true);
+      setTimerActive(false);
+      if (selectedAnswer === question.correctAnswer) {
+        setScore((prev) => prev + 1);
+      }
     }
   };
 
@@ -102,6 +145,7 @@ function App() {
     if (currentQuestion < QUESTIONS_PER_TEST - 1) {
       setCurrentQuestion((prev) => prev + 1);
       setSelectedAnswer(null);
+      setSelectedMultiple([]);
       setShowExplanation(false);
       setTimeLeft(TIME_PER_QUESTION);
       setTimerActive(true);
@@ -116,6 +160,7 @@ function App() {
     setScreen('welcome');
     setCurrentQuestion(0);
     setSelectedAnswer(null);
+    setSelectedMultiple([]);
     setShowExplanation(false);
     setAnswers([]);
     setScore(0);
@@ -140,6 +185,15 @@ function App() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const isAnswerCorrect = (userAnswer: number | number[] | null, correctAnswer: number | number[]): boolean => {
+    if (userAnswer === null) return false;
+    if (Array.isArray(correctAnswer)) {
+      if (!Array.isArray(userAnswer)) return false;
+      return arraysEqual(userAnswer, correctAnswer);
+    }
+    return userAnswer === correctAnswer;
   };
 
   const generateReportText = () => {
@@ -191,16 +245,31 @@ function App() {
     text += `────────────────────────────────────────────────\n\n`;
 
     testQuestions.forEach((q, idx) => {
-      const isCorrect = answers[idx] === q.correctAnswer;
-      text += `Вопрос ${idx + 1}. ${isCorrect ? '[✓]' : '[✗]'}\n`;
+      const userAnswer = answers[idx];
+      const isCorrect = isAnswerCorrect(userAnswer, q.correctAnswer);
+      const multiple = isMultipleChoice(q);
+      
+      text += `Вопрос ${idx + 1}. ${isCorrect ? '[✓]' : '[✗]'}${multiple ? ' (множественный выбор)' : ''}\n`;
       text += `${q.question}\n\n`;
       q.options.forEach((opt, optIdx) => {
-        const marker = optIdx === q.correctAnswer ? '>>>' : '   ';
-        const userMarker = optIdx === answers[idx] ? ' (ваш ответ)' : '';
+        const correctArr = Array.isArray(q.correctAnswer) ? q.correctAnswer : [q.correctAnswer];
+        const isCorrectOpt = correctArr.includes(optIdx);
+        const marker = isCorrectOpt ? '>>>' : '   ';
+        
+        let userMarker = '';
+        if (userAnswer !== null) {
+          if (Array.isArray(userAnswer)) {
+            if (userAnswer.includes(optIdx)) userMarker = ' (ваш ответ)';
+          } else {
+            if (userAnswer === optIdx) userMarker = ' (ваш ответ)';
+          }
+        }
         text += `${marker} ${String.fromCharCode(65 + optIdx)}) ${opt}${userMarker}\n`;
       });
       if (!isCorrect) {
-        text += `\n  Правильный ответ: ${String.fromCharCode(65 + q.correctAnswer)}) ${q.options[q.correctAnswer]}\n`;
+        const correctArr = Array.isArray(q.correctAnswer) ? q.correctAnswer : [q.correctAnswer];
+        const correctLetters = correctArr.map(i => String.fromCharCode(65 + i)).join(', ');
+        text += `\n  Правильный ответ: ${correctLetters}\n`;
       }
       text += `\n  Пояснение: ${q.explanation}\n`;
       text += `\n${'─'.repeat(48)}\n\n`;
@@ -302,6 +371,7 @@ function App() {
                 <li>• Время на вопрос: {TIME_PER_QUESTION} секунд</li>
                 <li>• Проходной балл: 60%</li>
                 <li>• Темы: HAZOP, FMEA, ALARP, ФЗ-116, ПЛАС, СУПБ</li>
+                <li>• Есть вопросы с множественным выбором</li>
               </ul>
             </div>
 
@@ -486,6 +556,9 @@ function App() {
   if (screen === 'quiz') {
     const question = testQuestions[currentQuestion];
     const progress = ((currentQuestion + 1) / QUESTIONS_PER_TEST) * 100;
+    const multiple = isMultipleChoice(question);
+    const correctArr = Array.isArray(question.correctAnswer) ? question.correctAnswer : [question.correctAnswer];
+    const hasSelection = multiple ? selectedMultiple.length > 0 : selectedAnswer !== null;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 flex flex-col">
@@ -519,6 +592,15 @@ function App() {
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="max-w-2xl w-full">
             <div className="bg-white/10 backdrop-blur-lg rounded-3xl p-5 sm:p-8 border border-white/20 shadow-2xl">
+              {/* Multiple choice indicator */}
+              {multiple && (
+                <div className="mb-3 inline-flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 border border-purple-400/30 rounded-lg">
+                  <span className="text-purple-200 text-xs font-medium">
+                    ☑ Можно выбрать несколько вариантов
+                  </span>
+                </div>
+              )}
+
               <h2 className="text-white text-sm sm:text-lg font-semibold mb-5 sm:mb-6 leading-relaxed">
                 {question.question}
               </h2>
@@ -526,15 +608,19 @@ function App() {
               <div className="space-y-3">
                 {question.options.map((option, index) => {
                   let optionStyle = 'bg-white/5 border-white/20 hover:bg-white/10 hover:border-blue-400/50';
+                  const isSelected = multiple 
+                    ? selectedMultiple.includes(index)
+                    : selectedAnswer === index;
                   
-                  if (selectedAnswer === index && !showExplanation) {
+                  if (isSelected && !showExplanation) {
                     optionStyle = 'bg-blue-500/20 border-blue-400 ring-2 ring-blue-400/50';
                   }
                   
                   if (showExplanation) {
-                    if (index === question.correctAnswer) {
+                    const isCorrectOption = correctArr.includes(index);
+                    if (isCorrectOption) {
                       optionStyle = 'bg-green-500/20 border-green-400 ring-2 ring-green-400/50';
-                    } else if (index === selectedAnswer && index !== question.correctAnswer) {
+                    } else if (isSelected && !isCorrectOption) {
                       optionStyle = 'bg-red-500/20 border-red-400 ring-2 ring-red-400/50';
                     } else {
                       optionStyle = 'bg-white/5 border-white/10 opacity-50';
@@ -549,8 +635,11 @@ function App() {
                       className={`w-full text-left p-3 sm:p-4 rounded-xl border transition-all duration-200 ${optionStyle}`}
                     >
                       <div className="flex items-start gap-3">
-                        <span className="flex-shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-white/10 flex items-center justify-center text-xs sm:text-sm font-bold text-white">
-                          {String.fromCharCode(65 + index)}
+                        <span className={`flex-shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-${multiple ? 'lg' : 'full'} bg-white/10 flex items-center justify-center text-xs sm:text-sm font-bold text-white`}>
+                          {showExplanation && correctArr.includes(index) ? '✓' :
+                           showExplanation && isSelected && !correctArr.includes(index) ? '✗' :
+                           multiple ? (isSelected ? '✓' : '') :
+                           String.fromCharCode(65 + index)}
                         </span>
                         <span className="text-white text-xs sm:text-sm leading-relaxed">
                           {option}
@@ -578,7 +667,7 @@ function App() {
                 {!showExplanation ? (
                   <button
                     onClick={handleConfirmAnswer}
-                    disabled={selectedAnswer === null}
+                    disabled={!hasSelection}
                     className="flex-1 py-3 px-6 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] shadow-lg text-sm sm:text-base"
                   >
                     Подтвердить ответ
@@ -682,14 +771,17 @@ function App() {
               <h3 className="text-white font-semibold text-xs sm:text-sm mb-2">📋 Обзор ответов:</h3>
               <div className="space-y-1.5">
                 {testQuestions.map((q, idx) => {
-                  const isCorrect = answers[idx] === q.correctAnswer;
+                  const isCorrect = isAnswerCorrect(answers[idx], q.correctAnswer);
+                  const multiple = isMultipleChoice(q);
                   return (
                     <div key={idx} className="flex items-start gap-2 text-xs">
                       <span className={`flex-shrink-0 mt-0.5 ${isCorrect ? 'text-green-400' : 'text-red-400'}`}>
                         {isCorrect ? '✓' : '✗'}
                       </span>
                       <span className="text-white/80 leading-relaxed">
-                        <span className="text-white/50">#{idx + 1}</span> {q.question.substring(0, 50)}...
+                        <span className="text-white/50">#{idx + 1}</span>
+                        {multiple && <span className="text-purple-300 ml-1">[М]</span>}
+                        {' '}{q.question.substring(0, 50)}...
                       </span>
                     </div>
                   );
